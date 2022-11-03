@@ -1,3 +1,3 @@
 all: main.c
-	gcc -g -o output main.c -lm
+	gcc -pg -o output main.c -lm
 

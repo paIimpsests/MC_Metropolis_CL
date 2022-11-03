@@ -40,6 +40,8 @@ struct Sphere
 	double r;	// reduced radius --- redundant with sigma ... might remove later on
         char type;      // particle type --- for visualization purposes only
         Sphere *next;   // pointer to the next particle in CL
+        Sphere *prev;
+        int CLindex;
 };
 
 
@@ -60,6 +62,7 @@ void stepTuneWrapper(int MCCycle, double acceptanceRate);
 double measurePF(void);
 int initCL(void);
 int updateCL(void);
+int updateSingleCL(int n);
 int emptyCLs(void);
 int retrieveIndex(int u, int v, int w);
 int CLOverflow(void);
@@ -350,14 +353,18 @@ int particleMove(double particleStepTune)
         pSpheres[n].y = fmod((pSpheres[n].y + delta[1]) + 2 * L, L);
         pSpheres[n].z = fmod((pSpheres[n].z + delta[2]) + 2 * L, L);
         // Update Cell Lists
-        updateCL();
+        //updateCL();
+        // no need to update CL, just remove particle from the CL it was in and
+        // add it to the correct new CL | also use double CL structure for that
+        // and remember the index of which CL the particle is in
+        updateSingleCL(n);
         // Check for overlap and move back particle if need be
         if (overlapCheckCL(n))
         {
                 pSpheres[n].x = bufferSphere.x;
                 pSpheres[n].y = bufferSphere.y;
                 pSpheres[n].z = bufferSphere.z;
-                updateCL();
+                updateSingleCL(n);
                 return 0;
         }
         else
@@ -397,7 +404,7 @@ int volumeMove(double volumeStepTune)
         initCL();
         // Scale back the system to its previous state according to the
         // relevant acceptance rule
-        if (delta[1] > rule)
+        if (delta[1] > rule) // rejects volumeMove if 2nd half of rule is false
         {
                 for (int i = 0; i < N; i++)
                 {
@@ -409,7 +416,7 @@ int volumeMove(double volumeStepTune)
                 initCL();
                 return 0;
         }
-        else if (ratio < 1)
+        else if (ratio < 1) // checks for overlap only if system shrinks
         {
                 if (overlapCheckNNP())
                 {
@@ -537,13 +544,45 @@ int updateCL(void)
         emptyCLs();
         for (int i = 0; i < N; i++)
         {
+                // Retrieve index of relevant cell
                 u = (int) pSpheres[i].x / sigma;
                 v = (int) pSpheres[i].y / sigma;
                 w = (int) pSpheres[i].z / sigma;
                 index = retrieveIndex(u, v, w);
+                pSpheres[i].CLindex = index;
+                // Place particle on top of relevan CL
+                pSpheres[i].prev = NULL;
                 pSpheres[i].next = CLTable[index];
+                if (CLTable[index] != NULL)
+                        CLTable[index]->prev = pSpheres+i;
                 CLTable[index] = pSpheres+i;
+
         }
+        return 0;
+}
+
+int updateSingleCL(int n)
+{
+        int index = pSpheres[n].CLindex;
+        int u = pSpheres[n].x / sigma,
+            v = pSpheres[n].y / sigma,
+            w = pSpheres[n].z / sigma;
+        // Remove particle from old CL
+        if (CLTable[index] == pSpheres+n)
+                CLTable[index] = pSpheres[n].next;
+        if (pSpheres[n].next != NULL)
+                pSpheres[n].next->prev = pSpheres[n].prev;
+        if (pSpheres[n].prev != NULL)
+                pSpheres[n].prev->next = pSpheres[n].next;
+        // Fetches the index of the new CL
+        index = retrieveIndex(u, v, w);
+        pSpheres[n].CLindex = index;
+        // Place particle on top of new CL
+        pSpheres[n].prev = NULL;
+        pSpheres[n].next = CLTable[index];
+        if (CLTable[index] != NULL)
+                CLTable[index]->prev = pSpheres+n;
+        CLTable[index] = pSpheres+n;
         return 0;
 }
 
