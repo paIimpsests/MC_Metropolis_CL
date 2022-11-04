@@ -17,6 +17,12 @@
  *  independantly
  */
 
+
+
+
+
+//    LIBRARIES
+// ===============
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
@@ -24,14 +30,70 @@
 #include <math.h>       // need to compile with `-lm` flag
 #include "mt19937ar.c"
 
+
+
+
+
+//    PREPROCESSOR CONSTANTS
+// ============================
 #define T 300           // absolute temperature
 #define kB 1.380649e-23 // Boltzmann constant
 #define eps kB*T        // unit of energy
 
 
-// STRUCTURES
-// ----------
+
+
+
+//    PROTOTYPES
+// ================
+// structures
+// ----------------
 typedef struct Sphere Sphere;
+// functions
+// ----------------
+int overlapCheck(Sphere one, Sphere two);
+int overlapCheckGlobal(void);
+int overlapCheckCL(int n);
+void sanityCheck();
+void readInit(char *filename);
+void writeCoords(char *filename);
+int particleMove(double particleStepTune);
+int volumeMove(double volumeStepTune);
+double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate);
+void stepTuneWrapper(int MCCycle, double acceptanceRate);
+double measurePF(void);
+int buildCL(int usecase);
+int updateSingleCL(int n);
+int retrieveIndex(int u, int v, int w);
+int CLOverflow(void);
+int snapshot(void);
+
+
+
+
+
+//    GLOBAL VARIABLES
+// ======================
+// hard spheres system
+// -----------------------
+int N = 0;                      // [READ FROM IMPUT] number of particles in the system
+double L = 0.0f;                // [READ FROM INPUT] reduced box size
+double P = 5.0f;                // reduced pressure
+double sigma = 1.0f;            // unit of length = 1 = particle size
+Sphere *pSpheres = NULL;        // [READ FROM INPUT] pointer to the table of particles data
+// cell lists
+// -----------------------
+Sphere **CLTable = NULL;
+double sCell1D = 0.0f;
+int nCell1D = 0;
+int nCell = 0;
+
+
+
+
+
+//    STRUCTURES
+// ================
 struct Sphere
 {
 	double x;	// reduced x coordinate 
@@ -45,74 +107,12 @@ struct Sphere
 };
 
 
-// FUNCTIONS
-// ---------
-int overlapCheck1P(int n, int m);
-int overlapCheckvar(Sphere one, Sphere two);
-int overlapCheckNNP(void);
-int overlapCheckCL(int n);
-void sanityCheck();
-void readInit(char *filename);
-void writeCoords(char *filename);
-int particleMove(double particleStepTune);
-int volumeMove(double volumeStepTune);
-double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate);
-void stepTuneWrapper(int MCCycle, double acceptanceRate);
-double measurePF(void);
-int initCL(void);
-int resizeCL(void);
-int updateCL(void);
-int updateSingleCL(int n);
-int retrieveIndex(int u, int v, int w);
-int CLOverflow(void);
-
-// GLOBAL VARIABLES
-// ----------------
-// System parameters
-int N = 0;                      // [READ FROM IMPUT] number of particles in the system
-double L = 0.0f;                // [READ FROM INPUT] reduced box size
-double P = 5.0f;                // reduced pressure
-double sigma = 1.0f;            // unit of length = 1 = particle size
-Sphere *pSpheres = NULL;        // [READ FROM INPUT] pointer to the table of particles data
-// CL parameters
-Sphere **CLTable = NULL;
-double sCell1D = 0.0f;
-int nCell1D = 0;
-int nCell = 0;
 
 
-int overlapCheck1P(int n, int m)
-{
-        /*
-         * Function:    overlapCheck1P
-         * ---------------------------
-         * Checks for overlap between one pair of particules by computing the
-         * distance between their centers and comparing it to the sum of their
-         * radii
-         *
-         * n:           index of the first particle in the data list
-         * m:           index of the second particle in the data lsit
-         *
-         * return:      1 is there is overlap, 0 if not
-         */
 
-	int overlap = 0;
-        double  dx = pSpheres[n].x - pSpheres[m].x,
-                dy = pSpheres[n].y - pSpheres[m].y,
-                dz = pSpheres[n].z - pSpheres[m].z;
-
-                dx = dx - L * rint(dx / L);
-                dy = dy - L * rint(dy / L);
-                dz = dz - L * rint(dz / L);
-
-	if ( dx * dx + dy * dy + dz * dz
-           < ( (pSpheres[n].r + pSpheres[m].r) * (pSpheres[n].r + pSpheres[m].r) )
-           )
-	        overlap = 1;
-	return overlap;
-}
-
-int overlapCheckvar(Sphere one, Sphere two)
+//    FUNCTIONS
+// ===============
+int overlapCheck(Sphere one, Sphere two)
 {
         int overlap = 0;
         double dx = one.x - two.x,
@@ -126,9 +126,11 @@ int overlapCheckvar(Sphere one, Sphere two)
         return overlap;
 }
 
-int overlapCheckNNP(void)
+
+
+int overlapCheckGlobal(void)
 {
-        /* Function:     overlapCheckNNP
+        /* Function:     overlapCheckGlobal
          * -----------------------------
          * Checks for overlap in the whole system, i.e. for N(N-1)/2 pairs
          *
@@ -139,7 +141,7 @@ int overlapCheckNNP(void)
         {
                 while ((overlap == 0) && (m < N))
                 {
-                        overlap = (n != m) * overlapCheck1P(n,m);
+                        overlap = (n != m) * overlapCheck(pSpheres[n], pSpheres[m]);
                         m++;
                 }
                 m = n;
@@ -147,6 +149,7 @@ int overlapCheckNNP(void)
         }
         return overlap;
 }
+
 
 
 int overlapCheckCL(int n)
@@ -178,7 +181,7 @@ int overlapCheckCL(int n)
                                 current = CLTable[index];
                                 while (current != NULL)
                                 {
-                                        if ((pSpheres+n != current) && overlapCheckvar(pSpheres[n], *current))
+                                        if ((pSpheres+n != current) && overlapCheck(pSpheres[n], *current))
                                                 overlap *= 0;
                                         current = current->next;
                                 }
@@ -188,6 +191,8 @@ int overlapCheckCL(int n)
         return !(overlap);
 }
 
+
+
 void sanityCheck(void)
 {
         /*
@@ -196,7 +201,7 @@ void sanityCheck(void)
          * Ends program execution if there is overlap in the system or if
          * something is wrong with the cell lists
          */
-        if (overlapCheckNNP())
+        if (overlapCheckGlobal())
         {
                 printf("Something is VERY wrong... There's overlap...\n");
                 exit(0);
@@ -207,6 +212,8 @@ void sanityCheck(void)
                 exit(0);
         }
 }
+
+
 
 void readInit(char *filename)
 {
@@ -264,6 +271,8 @@ void readInit(char *filename)
         }
 }
 
+
+
 void writeCoords(char *filename)
 {
         /*
@@ -296,6 +305,8 @@ void writeCoords(char *filename)
                 fclose(outfile);
         }
 }
+
+
 
 int particleMove(double particleStepTune)
 {
@@ -343,6 +354,8 @@ int particleMove(double particleStepTune)
                 return 1;                
 }
 
+
+
 int volumeMove(double volumeStepTune)
 {
         /*
@@ -387,7 +400,7 @@ int volumeMove(double volumeStepTune)
         }
         else if (ratio < 1)
         { // Box shrinks
-                if (overlapCheckNNP())
+                if (overlapCheckGlobal())
                 { // Overlap
                         for (int i = 0; i < N; i++)
                         {
@@ -405,12 +418,12 @@ int volumeMove(double volumeStepTune)
                         // Cell size does not guarantee check for all possible
                         // overlaps
                         // Need to reduce cell size, thus number of cells
-                                updateCL();
+                                buildCL(3);
                         else
                         // Cell size is sufficient to check for all possible
                         // overlaps
                         // Only need to reduce cell size accordingly
-                                resizeCL();
+                                buildCL(2);
                         return 1;
                 }
         }
@@ -422,14 +435,16 @@ int volumeMove(double volumeStepTune)
                 // cannot be any
                 // Need to reduce cell size, thus increase number of cells,
                 // thus free existing CL table and re-allocate enough memory
-                        initCL();
+                        buildCL(1);
                 else
                 // Cell size is necessary (?) to check for all possible overlaps
                 // Only need to increase cell size accordingly
-                        resizeCL();
+                        buildCL(2);
                 return 1;
         }
 }
+
+
 
 double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate)
 {
@@ -450,6 +465,8 @@ double tuneStepSize(int nSuccess, int nCycles, double acceptanceRate)
         else
                 return 0.98; 
 }
+
+
 
 void stepTuneWrapper(int MCCycle, double acceptanceRate)
 {
@@ -486,6 +503,8 @@ void stepTuneWrapper(int MCCycle, double acceptanceRate)
         } 
 }
 
+
+
 double measurePF(void)
 {
         /*
@@ -499,126 +518,7 @@ double measurePF(void)
         return PF;
 }
 
-int initCL(void)
-{
-        /*
-         * Function: initCL
-         * ----------------
-         * Initializes the table of cell lists according to the current state of
-         * the system. Does it after allocating enough memory for the system to
-         * be divided into cells of size close (>=) to the targeted size sigma. 
-         *
-         * USE-CASE:    At initialization; after volumeMove() if cell size gets
-         *              > 2*sigma
-         */
-        // CL parameters that need to be updated with L
-        sCell1D = L / ((int) (L / sigma));
-        nCell1D = (int) (L / sCell1D);
-        nCell = nCell1D * nCell1D * nCell1D;
-        // Allocating memory for the nCell1D * nCell1D * nCell1D table of CLs
-        free(CLTable);
-        CLTable = malloc(nCell * sizeof(**CLTable));
-        if (CLTable == NULL)
-                exit(EXIT_FAILURE);
-        // Initializing all CLs to a NULL pointer that also corresponds to the
-        // last element of the CL
-        for (int i = 0; i < nCell; i++)
-                CLTable[i] = NULL;
-        // Updating CLs according to the current state of the system
-        for (int i = 0; i < N; i++)
-        {
-                // Retrieve index of relevant cell
-                int u = pSpheres[i].x / sCell1D;
-                int v = pSpheres[i].y / sCell1D;
-                int w = pSpheres[i].z / sCell1D;
-                int index = retrieveIndex(u, v, w);
-                pSpheres[i].CLindex = index;
-                // Place particle on top of relevant CL
-                pSpheres[i].prev = NULL;
-                pSpheres[i].next = CLTable[index];
-                if (CLTable[index] != NULL)
-                        CLTable[index]->prev = pSpheres+i;
-                CLTable[index] = pSpheres+i;
-        }
-        return 0;
-}
 
-int resizeCL(void)
-{
-        /*
-         * Function: resizeCL
-         * ----------------
-         * Re-initializes the table of cell lists according to the current state
-         * of the system and the newly defined sCell1D. The values of nCell1D
-         * and nCell are not changed so no extra memory is allocated. Only the
-         * size of the cells has changed.
-         *
-         * USE-CASE:    After volumeMove() success, if the new cell size is
-         *              neither < sigma nor > 2*sigma
-         */
-        // Initializing all CLs to a NULL pointer that also corresponds to the
-        // last element of the CLs
-        for (int i = 0; i < nCell; i++)
-                CLTable[i] = NULL;
-        // Updating CLs according to the current state of the system
-        for (int i = 0; i < N; i++)
-        {
-                // Retrieve index of relevant cell
-                int u = pSpheres[i].x / sCell1D;
-                int v = pSpheres[i].y / sCell1D;
-                int w = pSpheres[i].z / sCell1D;
-                int index = retrieveIndex(u, v, w);
-                pSpheres[i].CLindex = index;
-                // Place particle on top of relevant CL
-                pSpheres[i].prev = NULL;
-                pSpheres[i].next = CLTable[index];
-                if (CLTable[index] != NULL)
-                        CLTable[index]->prev = pSpheres+i;
-                CLTable[index] = pSpheres+i;
-        }
-        return 0;
-}
-
-int updateCL(void)
-{
-        /*
-         * Function: updateCL
-         * ------------------
-         * Re-initializes the table of cell lists according to the current state
-         * of the system. The values of sCell1D, nCell1D and nCell are changed
-         * and the last two are reduced but no new memory is allocated, only
-         * part of the previously allocated memory is now used.
-         *
-         * USE-CASE:    After volumeMove() success, if box shrinks and cell
-         *              size gets < sigma
-         */
-        // Initializing all CLs to a NULL pointer that also corresponds to the
-        // last element of the CL --- Done before updating nCell so the whole
-        // table is updated
-        for (int i = 0; i < nCell; i++)
-                CLTable[i] = NULL;
-        // CL parameters that need to be updated
-        sCell1D = L / ((int) (L / sigma));
-        nCell1D = (int) (L / sCell1D);
-        nCell = nCell1D * nCell1D * nCell1D;
-        // Updating CLs according to the current state of the system
-        for (int i = 0; i < N; i++)
-        {
-                // Retrieve index of relevant cell
-                int u = pSpheres[i].x / sCell1D;
-                int v = pSpheres[i].y / sCell1D;
-                int w = pSpheres[i].z / sCell1D;
-                int index = retrieveIndex(u, v, w);
-                pSpheres[i].CLindex = index;
-                // Place particle on top of relevant CL
-                pSpheres[i].prev = NULL;
-                pSpheres[i].next = CLTable[index];
-                if (CLTable[index] != NULL)
-                        CLTable[index]->prev = pSpheres+i;
-                CLTable[index] = pSpheres+i;
-        }
-        return 0;
-}
 
 int updateSingleCL(int n)
 {
@@ -645,6 +545,61 @@ int updateSingleCL(int n)
         return 0;
 }
 
+
+
+int buildCL(int usecase)
+{
+        switch (usecase)
+        {
+                case 1:         // former initCL()
+                {
+                        sCell1D = L / ((int) (L / sigma));
+                        nCell1D = (int) (L / sCell1D);
+                        nCell = nCell1D * nCell1D * nCell1D;
+                        free(CLTable);
+                        CLTable = malloc(nCell * sizeof(**CLTable));
+                        if (CLTable == NULL)
+                                exit(EXIT_FAILURE);
+                        for (int i = 0; i < nCell; i++)
+                                CLTable[i] = NULL;
+                        break;
+                }
+                case 2:         // former resizeCL()
+                {
+                        for (int i = 0; i < nCell; i++)
+                                CLTable[i] = NULL;
+                        break;
+                }
+                case 3:         // former updateCL()
+                {
+                        for (int i = 0; i < nCell; i++)
+                                CLTable[i] = NULL;
+                        sCell1D = L / ((int) (L / sigma));
+                        nCell1D = (int) (L / sCell1D);
+                        nCell = nCell1D * nCell1D * nCell1D;
+                        break;
+                }
+                default:
+                        return 1;
+        }
+        for (int i = 0; i < N; i++)
+        {
+                int u = pSpheres[i].x / sCell1D;
+                int v = pSpheres[i].y / sCell1D;
+                int w = pSpheres[i].z / sCell1D;
+                int index = retrieveIndex(u, v, w);
+                pSpheres[i].CLindex = index;
+                pSpheres[i].prev = NULL;
+                pSpheres[i].next = CLTable[index];
+                if (CLTable[index] != NULL)
+                        CLTable[index]->prev = pSpheres+i;
+                CLTable[index] = pSpheres+i;
+        }
+        return 0;
+}
+
+
+
 int retrieveIndex(int u, int v, int w)
 {
         int index = 0;
@@ -654,6 +609,8 @@ int retrieveIndex(int u, int v, int w)
         return index;
 
 }
+
+
 
 int CLOverflow(void)
 {
@@ -671,6 +628,37 @@ int CLOverflow(void)
         return (count != N);
 }
 
+
+
+int snapshot(void)
+{
+        // output files cleansing
+        char *snapcoords = "snap_coords.sph";
+        FILE *snap1 = fopen(snapcoords, "w+");
+        if (snap1 != NULL)
+                fclose(snap1);
+        char *snaprho = "snap_density.txt";
+        FILE *snap2 = fopen(snaprho, "w+");
+        if (snap2 != NULL)
+                fclose(snap2);
+
+
+        // writing snapshots
+        writeCoords(snapcoords);
+        snap2 = fopen(snaprho, "a");
+        fprintf(snap2, "%lf\n", 6.0f * measurePF() / (M_PI * sigma * sigma * sigma));
+        fclose(snap2);
+
+
+        return 0;
+}
+
+
+
+
+
+//    MAIN
+// ==========
 int main(int argc, char *argv[])
 {
         // Measuring CPU running time
@@ -706,7 +694,7 @@ int main(int argc, char *argv[])
 
         // SYSTEM INITIALIZATION        
         readInit("SC_init_6.sph");
-        initCL();
+        buildCL(1);
         writeCoords(outfilename);
 
 
@@ -717,7 +705,7 @@ int main(int argc, char *argv[])
 
         // 2nd half of simulation time
         // Measurements of observables --- here: packing fraction to obtain number density
-        for (i = 1; i < (MCCycle / 2 + 1); i++)
+        for (i = 0; i < (MCCycle / 2); i++)
         {
                 for (j = 0; j < N; j++)
                 {
@@ -728,7 +716,7 @@ int main(int argc, char *argv[])
                                 particleMove(fixedStepSize);
                 }
                 PF += measurePF();
-                if (i % 1000 == 0)
+                if (i % 999 == 0)
                 {
                         writeCoords("coords.sph");
                         sanityCheck();
@@ -739,6 +727,8 @@ int main(int argc, char *argv[])
                         fclose(writefile);
                         PF = 0.0f;
                 }
+                if (i == 34729)
+                        snapshot();
         }
 
         free(CLTable);
